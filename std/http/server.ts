@@ -1,15 +1,19 @@
 // Copyright 2018-2019 the Deno authors. All rights reserved. MIT license.
 
-import { BufReader, BufWriter } from 'https://deno.land/std@v0.3.2/io/bufio.ts';
-import { TextProtoReader } from 'https://deno.land/std@v0.3.2/textproto/mod.ts';
-import { STATUS_TEXT } from 'https://deno.land/std@v0.3.2/http/http_status.ts';
-import { assert } from 'https://deno.land/std@v0.3.2/testing/asserts.ts';
+import {
+  BufReader,
+  BufWriter,
+  UnexpectedEOFError,
+} from 'https://deno.land/std@v0.11.0/io/bufio.ts';
+import { TextProtoReader } from 'https://deno.land/std@v0.11.0/textproto/mod.ts';
+import { STATUS_TEXT } from 'https://deno.land/std@v0.11.0/http/http_status.ts';
+import { assert } from 'https://deno.land/std@v0.11.0/testing/asserts.ts';
 import {
   defer,
   Deferred,
 } from 'https://deno.land/std@v0.2.11/util/deferred.ts';
 import { BodyReader, ChunkedBodyReader } from './readers.ts';
-import { encode } from 'https://deno.land/std@v0.3.2/strings/strings.ts';
+import { encode } from 'https://deno.land/std@v0.11.0/strings/mod.ts';
 
 /** basic handler for http request */
 export type HttpHandler = (req: ServerRequest, res: ServerResponder) => unknown;
@@ -351,9 +355,9 @@ export async function readRequest(conn: Deno.Reader): Promise<ServerRequest> {
     throw lineErr;
   }
   const [method, url, proto] = line.split(' ', 3);
-  const [headers, headersErr] = await tp.readMIMEHeader();
-  if (headersErr) {
-    throw headersErr;
+  const headers = await tp.readMIMEHeader();
+  if (headers === Deno.EOF) {
+    throw new UnexpectedEOFError();
   }
   const contentLength = headers.get('content-length');
   const body =
@@ -379,9 +383,9 @@ export async function readResponse(conn: Deno.Reader): Promise<ServerResponse> {
     throw lineErr;
   }
   const [proto, status, statusText] = line.split(' ', 3);
-  const [headers, headersErr] = await tp.readMIMEHeader();
-  if (headersErr) {
-    throw headersErr;
+  const headers = await tp.readMIMEHeader();
+  if (headers === Deno.EOF) {
+    throw new UnexpectedEOFError();
   }
   const contentLength = headers.get('content-length');
   const body =

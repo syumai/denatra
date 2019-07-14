@@ -1,8 +1,11 @@
 // Copyright 2018-2019 the Deno authors. All rights reserved. MIT license.
 
-import { BufReader } from 'https://deno.land/std@v0.3.2/io/bufio.ts';
-import { TextProtoReader } from 'https://deno.land/std@v0.3.2/textproto/mod.ts';
-import { assert } from 'https://deno.land/std@v0.3.2/testing/asserts.ts';
+import {
+  BufReader,
+  UnexpectedEOFError,
+} from 'https://deno.land/std@v0.11.0/io/bufio.ts';
+import { TextProtoReader } from 'https://deno.land/std@v0.11.0/textproto/mod.ts';
+import { assert } from 'https://deno.land/std@v0.11.0/testing/asserts.ts';
 
 export class BodyReader implements Deno.Reader {
   total: number;
@@ -13,24 +16,38 @@ export class BodyReader implements Deno.Reader {
     this.bufReader = new BufReader(reader);
   }
 
-  async read(p: Uint8Array): Promise<Deno.ReadResult> {
+  async read(p: Uint8Array): Promise<number | Deno.EOF> {
     if (p.length > this.contentLength - this.total) {
-      const buf = new Uint8Array(this.contentLength - this.total);
-      const [nread, err] = await this.bufReader.readFull(buf);
-      if (err && err !== 'EOF') {
-        throw err;
+      let buf: Uint8Array | Deno.EOF = new Uint8Array(
+        this.contentLength - this.total
+      );
+      try {
+        buf = await this.bufReader.readFull(buf);
+      } catch (err) {
+        if (err.partial instanceof Uint8Array) {
+          buf = err.partial;
+        } else {
+          throw err;
+        }
+      }
+      if (buf === Deno.EOF) {
+        return Deno.EOF;
       }
       p.set(buf);
+      const nread = buf.byteLength;
       this.total += nread;
       assert(
         this.total === this.contentLength,
         `${this.total}, ${this.contentLength}`
       );
-      return { nread, eof: true };
+      return nread;
     } else {
-      const { nread } = await this.bufReader.read(p);
+      const nread = await this.bufReader.read(p);
+      if (nread === Deno.EOF) {
+        return Deno.EOF;
+      }
       this.total += nread;
-      return { nread, eof: false };
+      return nread;
     }
   }
 }
@@ -45,7 +62,7 @@ export class ChunkedBodyReader implements Deno.Reader {
   crlfBuf = new Uint8Array(2);
   finished: boolean = false;
 
-  async read(p: Uint8Array): Promise<Deno.ReadResult> {
+  async read(p: Uint8Array): Promise<number | Deno.EOF> {
     const [line, sizeErr] = await this.tpReader.readLine();
     if (sizeErr) {
       throw sizeErr;
@@ -54,7 +71,7 @@ export class ChunkedBodyReader implements Deno.Reader {
     if (len === 0) {
       this.finished = true;
       await this.bufReader.readFull(this.crlfBuf);
-      return { nread: 0, eof: true };
+      return Deno.EOF;
     } else {
       const buf = new Uint8Array(len);
       await this.bufReader.readFull(buf);
@@ -66,14 +83,14 @@ export class ChunkedBodyReader implements Deno.Reader {
       if (buf.byteLength <= p.byteLength) {
         p.set(buf);
         this.chunks.shift();
-        return { nread: buf.byteLength, eof: false };
+        return buf.byteLength;
       } else {
         p.set(buf.slice(0, p.byteLength));
         this.chunks[0] = buf.slice(p.byteLength, buf.byteLength);
-        return { nread: p.byteLength, eof: false };
+        return p.byteLength;
       }
     } else {
-      return { nread: 0, eof: true };
+      return Deno.EOF;
     }
   }
 }
